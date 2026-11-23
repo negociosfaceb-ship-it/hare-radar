@@ -50,10 +50,23 @@
       return -1;
     };
 
+    // Celular em pé: o filme aparece INTEIRO (sem cortar as laterais), no topo da tela,
+    // com uma cópia desfocada dele preenchendo o fundo. O texto fica logo abaixo.
+    const fundo = cine.querySelector(".cine-fundo");
+    const fctx = fundo && fundo.getContext("2d");
+    const telaEmPe = matchMedia("(max-width: 900px) and (orientation: portrait)");
+    let emPe = telaEmPe.matches, dpr = 1;
+
     const ajustar = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      emPe = telaEmPe.matches;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.round(canvas.clientWidth * dpr);
       canvas.height = Math.round(canvas.clientHeight * dpr);
+      if (fundo) { // fundo em baixa resolução: o desfoque é feito pelo CSS (GPU)
+        fundo.width = Math.max(1, Math.round(fundo.clientWidth / 4));
+        fundo.height = Math.max(1, Math.round(fundo.clientHeight / 4));
+      }
+      cine.classList.toggle("cine--em-pe", emPe);
       desenhado = -1;
       desenhar(Math.round(atual), true);
     };
@@ -62,10 +75,38 @@
       const j = maisProximo(i);
       if (j < 0 || (j === desenhado && !forcar)) return;
       const img = quadros[j];
+      const iw = img.naturalWidth, ih = img.naturalHeight;
       const cw = canvas.width, ch = canvas.height;
-      const escala = Math.max(cw / img.naturalWidth, ch / img.naturalHeight); // "cover"
-      const w = img.naturalWidth * escala, h = img.naturalHeight * escala;
-      ctx.drawImage(img, (cw - w) / 2, (ch - h) / 2, w, h);
+      if (!emPe) {
+        const escala = Math.max(cw / iw, ch / ih); // "cover"
+        const w = iw * escala, h = ih * escala;
+        ctx.drawImage(img, (cw - w) / 2, (ch - h) / 2, w, h);
+      } else {
+        // Fundo: cópia "cover" desfocada
+        if (fctx) {
+          const fe = Math.max(fundo.width / iw, fundo.height / ih);
+          fctx.drawImage(img, (fundo.width - iw * fe) / 2, (fundo.height - ih * fe) / 2, iw * fe, ih * fe);
+        }
+        // Frente: filme na largura da tela (zoom de 20%: corta só 8% de cada lateral)
+        const escala = (cw / iw) * 1.2;
+        const w = iw * escala, h = ih * escala;
+        const x = (cw - w) / 2;
+        // Centraliza o conjunto filme + texto (≈260px de texto abaixo do filme)
+        const y = Math.max(72 * dpr, (ch - h - 260 * dpr) / 2);
+        canvas.dataset.faixa = `${Math.round((y + h) / dpr)}`;
+        ctx.clearRect(0, 0, cw, ch);
+        ctx.drawImage(img, x, y, w, h);
+        // Dissolve as bordas de cima e de baixo no fundo (sem linha reta)
+        ctx.globalCompositeOperation = "destination-in";
+        const g = ctx.createLinearGradient(0, y, 0, y + h);
+        g.addColorStop(0, "rgba(0,0,0,0)");
+        g.addColorStop(0.12, "#000");
+        g.addColorStop(0.86, "#000");
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.globalCompositeOperation = "source-over";
+      }
       desenhado = j;
     }
 
@@ -99,7 +140,7 @@
   }
 
   /* ── Parallax leve nas artes ──────────────────────────────────────────── */
-  const artes = reduzir ? [] : [...document.querySelectorAll(".arte")];
+  const artes = (reduzir || matchMedia("(max-width: 860px)").matches) ? [] : [...document.querySelectorAll(".arte")];
   if (artes.length) {
     const mover = () => {
       for (const a of artes) {
